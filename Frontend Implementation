@@ -1,0 +1,43 @@
+// frontend/src/hooks/useWebSocket.js
+import { useEffect, useRef, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+
+const useWebSocket = () => {
+  const { currentUser } = useAuth();
+  const [progress, setProgress] = useState(null);
+  const ws = useRef(null);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const token = localStorage.getItem('token');
+    const wsUrl = `${process.env.REACT_APP_WS_URL}?token=${token}`;
+    
+    ws.current = new WebSocket(wsUrl);
+
+    ws.current.onopen = () => {
+      console.log('WebSocket connected');
+    };
+
+    ws.current.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === 'INIT_PROGRESS' || message.type === 'PROGRESS_UPDATE') {
+        setProgress(message.data);
+      }
+    };
+
+    ws.current.onclose = () => {
+      console.log('WebSocket disconnected');
+    };
+
+    return () => {
+      if (ws.current) {
+        ws.current.close();
+      }
+    };
+  }, [currentUser]);
+
+  return { progress };
+};
+
+export default useWebSocket;
