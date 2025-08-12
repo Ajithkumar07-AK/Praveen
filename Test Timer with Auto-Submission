@@ -1,0 +1,73 @@
+// frontend/src/components/test/TimerComponent.jsx
+import React, { useState, useEffect, useRef } from 'react';
+import { Typography, LinearProgress, Box } from '@mui/material';
+import { styled } from '@mui/material/styles';
+
+const TimerContainer = styled(Box)(({ theme }) => ({
+  position: 'sticky',
+  top: theme.spacing(2),
+  zIndex: 1000,
+  backgroundColor: theme.palette.background.paper,
+  padding: theme.spacing(2),
+  borderRadius: theme.shape.borderRadius,
+  boxShadow: theme.shadows[2],
+  marginBottom: theme.spacing(2)
+}));
+
+const TimerComponent = ({ initialTime, onTimeUp, pause = false }) => {
+  const [timeLeft, setTimeLeft] = useState(initialTime);
+  const timerRef = useRef(null);
+  const startTimeRef = useRef(Date.now());
+  const pausedTimeRef = useRef(0);
+
+  useEffect(() => {
+    if (pause) {
+      clearInterval(timerRef.current);
+      pausedTimeRef.current = Date.now();
+      return;
+    }
+
+    if (pausedTimeRef.current > 0) {
+      const pauseDuration = Date.now() - pausedTimeRef.current;
+      startTimeRef.current += pauseDuration;
+      pausedTimeRef.current = 0;
+    }
+
+    timerRef.current = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      const remaining = Math.max(0, initialTime - elapsed);
+      setTimeLeft(remaining);
+
+      if (remaining <= 0) {
+        clearInterval(timerRef.current);
+        onTimeUp();
+      }
+    }, 1000);
+
+    return () => clearInterval(timerRef.current);
+  }, [initialTime, onTimeUp, pause]);
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  const progress = (timeLeft / initialTime) * 100;
+
+  return (
+    <TimerContainer>
+      <Typography variant="h6" gutterBottom>
+        Time Remaining: {formatTime(timeLeft)}
+      </Typography>
+      <LinearProgress 
+        variant="determinate" 
+        value={progress} 
+        color={timeLeft < initialTime * 0.2 ? 'error' : timeLeft < initialTime * 0.5 ? 'warning' : 'primary'}
+        sx={{ height: 10, borderRadius: 5 }}
+      />
+    </TimerContainer>
+  );
+};
+
+export default TimerComponent;
