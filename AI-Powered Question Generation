@@ -1,0 +1,140 @@
+// backend/services/aiQuestionGenerator.js
+const { OpenAI } = require('openai');
+const Question = require('../models/Question.model');
+const logger = require('../utils/logger');
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const generateAIQuestions = async (domain, count = 5) => {
+  try {
+    const prompt = `
+      Generate ${count} multiple-choice aptitude test questions in the ${domain} domain.
+      Each question should have:
+      - A clear and concise question text
+      - 4 plausible options (a, b, c, d)
+      - The correct answer marked
+      - A difficulty level between 1-5
+      
+      Format the response as a JSON array like this:
+      [
+        {
+          "questionText": "What is the time complexity of binary search?",
+          "options": [
+            "O(1)",
+            "O(log n)",
+            "O(n)",
+            "O(n log n)"
+          ],
+          "correctAnswer": "O(log n)",
+          "difficulty": 3
+        },
+        ...
+      ]
+    `;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: "You are a helpful assistant that creates high-quality aptitude test questions." },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    });
+
+    const content = response.choices[0].message.content;
+    let questions;
+    
+    try {
+      questions = JSON.parse(content);
+    } catch (e) {
+      logger.error('Failed to parse AI response:', content);
+      throw new Error('Invalid AI response format');
+    }
+
+    // Validate questions
+    if (!Array.isArray(questions) || questions.length === 0) {
+      throw new Error('No questions generated');
+    }
+
+    // Save to database
+    const savedQuestions = await Question.insertMany(
+      questions.map(q => ({
+        ...q,
+        domain,
+        source: 'AI-generated'
+      }))
+    );
+
+    return savedQuestions;
+  } catch (error) {
+    logger.error(`AI question generation failed: ${error.message}`);
+    throw error;
+  }
+};
+
+const enhanceQuestionWithAI = async (questionId) => {
+  try {
+    const question = await Question.findById(questionId);
+    if (!question) throw new Error('Question not found');
+
+    const prompt = `
+      Enhance the following aptitude test question to make it more clear and challenging:
+      
+      Original question: ${question.questionText}
+      Current options: ${question.options.join(', ')}
+      Correct answer: ${question.correctAnswer}
+      Current difficulty: ${question.difficulty}
+      
+      Provide an improved version with:
+      1. A more precise question text
+      2. Better distractors (incorrect options)
+      3. Adjusted difficulty if needed
+      
+      Format the response as JSON:
+      {
+        "improvedQuestionText": "...",
+        "improvedOptions": ["...", "...", "...", "..."],
+        "improvedCorrectAnswer": "...",
+        "suggestedDifficulty": x
+      }
+    `;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: "You are a helpful assistant that improves test questions." },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.6,
+      max_tokens: 1000
+    });
+
+    const improvement = JSON.parse(response.choices[0].message.content);
+    
+    // Update the question
+    const updatedQuestion = await Question.findByIdAndUpdate(
+      questionId,
+      {
+        questionText: improvement.improvedQuestionText,
+        options: improvement.improvedOptions,
+        correctAnswer: improvement.improvedCorrectAnswer,
+        difficulty: improvement.suggestedDifficulty || question.difficulty,
+        lastEnhanced: new Date()
+      },
+      { new: true }
+    );
+
+    return updatedQuestion;
+  } catch (error) {
+    logger.error(`Question enhancement failed: ${error.message}`);
+    throw error;
+  }
+};
+
+module.exports = {
+  generateAIQuestions,
+  enhanceQuestionWithAI
+};
