@@ -1,0 +1,82 @@
+// backend/services/adaptiveTesting.service.js
+const Question = require('../models/Question.model');
+const User = require('../models/User.model');
+const logger = require('../utils/logger');
+
+const calculateNextDifficulty = (userPerformance) => {
+  // Implement Elo-like rating system for question difficulty
+  const K_FACTOR = 32;
+  const expectedScore = 1 / (1 + Math.pow(10, (userPerformance.avgDifficulty - userPerformance.ability) / 400));
+  const actualScore = userPerformance.accuracy;
+  const newAbility = userPerformance.ability + K_FACTOR * (actualScore - expectedScore);
+  
+  return Math.min(Math.max(Math.round(newAbility / 100), 5); // Scale to 1-5 difficulty
+};
+
+const getAdaptiveQuestions = async (userId, domain) => {
+  try {
+    const user = await User.findById(userId)
+      .populate({
+        path: 'completedLevels',
+        options: { sort: { dateCompleted: -1 }, limit: 3 }
+      });
+
+    // Calculate user performance metrics
+    const performance = {
+      ability: 1500, // Initial Elo rating
+      accuracy: 0.7, // Default accuracy
+      avgDifficulty: 3, // Default difficulty
+      consistency: 0
+    };
+
+    if (user.completedLevels.length > 0) {
+      const totalQuestions = user.completedLevels.reduce((sum, level) => sum + level.questions.length, 0);
+      const correctAnswers = user.completedLevels.reduce((sum, level) => sum + level.score, 0);
+      
+      performance.accuracy = correctAnswers / totalQuestions;
+      performance.avgDifficulty = user.completedLevels.reduce((sum, level) => 
+        sum + (level.avgDifficulty || 3), 0) / user.completedLevels.length;
+      
+      // Calculate consistency (standard deviation of scores)
+      const scores = user.completedLevels.map(level => level.score / level.questions.length);
+      const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+      performance.consistency = Math.sqrt(scores.map(s => Math.pow(s - mean, 2)).reduce((a, b) => a + b, 0) / scores.length);
+    }
+
+    // Determine next difficulty level
+    const nextDifficulty = calculateNextDifficulty(performance);
+    
+    // Get questions with adaptive difficulty
+    const questions = await Question.aggregate([
+      { $match: { 
+        domain,
+        difficulty: { $gte: nextDifficulty - 1, $lte: nextDifficulty + 1 },
+        _id: { $nin: user.attemptedQuestions }
+      }},
+      { $sample: { size: 10 } }
+    ]);
+
+    // If not enough questions, expand difficulty range
+    if (questions.length < 10) {
+      const additionalQuestions = await Question.aggregate([
+        { $match: { 
+          domain,
+          _id: { $nin: user.attemptedQuestions }
+        }},
+        { $sample: { size: 10 - questions.length } }
+      ]);
+      questions.push(...additionalQuestions);
+    }
+
+    return {
+      questions,
+      difficulty: nextDifficulty,
+      performanceMetrics: performance
+    };
+  } catch (error) {
+    logger.error(`Error in adaptive question selection: ${error.message}`);
+    throw error;
+  }
+};
+
+module.exports = { getAdaptiveQuestions };
